@@ -105,4 +105,4 @@
 ### Совместимость  
 Проверено на  `MACHINIST X99 D8 MAX` с двумя `Nvidia RTX 2080 Ti`, `Proxmox VE 8.2`, но должно работать после настройки и на других дистрибутивах / оборудовании.
 
-[Заметка на Дзене](https://dzen.ru/b/ZiELJLmPUiH7RN4i)  
+[Заметка на Дзене](https://dzen.ru/a/Zm8bxGgDdF6HrKHd)  
