@@ -1,0 +1,11 @@
+[Unit]
+Description=Fan control
+ 
+[Service]
+Type=simple
+ExecStart=/home/fanc.sh
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
