@@ -6,6 +6,8 @@ Type=simple
 ExecStart=/home/fanc.sh
 Restart=on-failure
 RestartSec=5s
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=98
 
 [Install]
 WantedBy=multi-user.target
