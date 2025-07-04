@@ -1,21 +1,23 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-DELAY=1
-CPU_MIN_TEMP=50
-CPU_MAX_TEMP=60
-GPU_MIN_TEMP=50
-GPU_MAX_TEMP=65
-FAN_MIN_SIGNAL=75
+DELAY=2 #Delay between checks
+CPU_MIN_TEMP=50 #CPU min temp
+CPU_MAX_TEMP=60 #CPU max temp
+GPU_MIN_TEMP=50 #GPU min temp
+GPU_MAX_TEMP=65 #GPU max temp
+FAN_MIN_SIGNAL=75 #Min PWM value
 
-ANOMAL_MIN_TEMP=5
-ANOMAL_MAX_TEMP=90
+ANOMAL_MIN_TEMP=5 #Anomal min temp
+ANOMAL_MAX_TEMP=90 #Anomal max temp
 
-CPU_SLOT_NUM=`grep "physical id"  /proc/cpuinfo | sort -u | wc -l`
-GPU_CARDS_NUM=`nvidia-smi -L | wc -l`
+# Список серверов мониторинга GPU (IP:PORT)
+gpu_temp_servers=("192.168.5.2:17006" "192.168.5.3:17006")
+
+CPU_SLOT_NUM=$(grep "physical id"  /proc/cpuinfo | sort -u | wc -l)
 
 FAN_CTRL_PATH='/sys/devices/platform/nct6775.2592/hwmon/[[:print:]]*'
 
-echo "CPU_SLOT_NUM = $CPU_SLOT_NUM, GPU_CARDS_NUM = $GPU_CARDS_NUM"
+echo "CPU_SLOT_NUM = $CPU_SLOT_NUM, GPU servers: ${#gpu_temp_servers[@]}"
 
 echo "Enable manual PWM control"
 echo 1 > $FAN_CTRL_PATH/pwm1_enable
@@ -37,30 +39,64 @@ if [ -z "$CPU_SLOT_NUM" ] || ((CPU_SLOT_NUM==0)); then
 	done
 fi
 
-#Checking GPU devices
-if [ -z "$GPU_CARDS_NUM" ]; then
-	echo "WARNING! No GPU devices found."
-	GPU_CARDS_NUM=0
-fi
-
 #Returns the maximum value.
 function get_max_val {
 echo "$1 $2" | awk '{print ($1 > $2) ? $1 : $2}'
 }
 
-#Get the maximum temperature among devices. The parameter indicates the type: 0 - CPU, 1 - GPU.
-function get_dev_max_temp {
+#Get CPU temperature
+function get_cpu_temp {
 local g_max_temp=0
-local dev_slots=$(($1?$GPU_CARDS_NUM:$CPU_SLOT_NUM))
-for ((i=0; i<$dev_slots; i++))
+for ((i=0; i<CPU_SLOT_NUM; i++))
 do
-	local gtemp=$(($1?$(nvidia-smi -i $i --query-gpu=temperature.gpu --format=csv,noheader):$(sensors coretemp-isa-000$i | grep "Package id $i" | sed -r 's/\..+//;s|.*\+||')))
+	#Get temperature from CPU
+	local gtemp=$(sensors coretemp-isa-000$i | grep "Package id $i" | sed -r 's/\..+//;s|.*\+||')
+	#Checking temperature
 	if [ -z "$gtemp" ] || (($gtemp<$ANOMAL_MIN_TEMP)) || (($gtemp>$ANOMAL_MAX_TEMP)); then
-		gtemp=$(($1?$GPU_MAX_TEMP:$CPU_MAX_TEMP))
+		#If temperature is not valid - set maximum value
+		gtemp=$CPU_MAX_TEMP
 	fi
+	#Save maximum value
 	g_max_temp=$(get_max_val $g_max_temp $gtemp)
 done
 echo $g_max_temp
+}
+
+#Get GPU temperature from servers
+function get_gpu_temp {
+local g_max_temp=0
+local got_response=0
+
+# Если нет серверов - возвращаем минимальное значение (для отсутствия реакции)
+if [ ${#gpu_temp_servers[@]} -eq 0 ]; then
+	echo $GPU_MIN_TEMP
+	return
+fi
+
+for server in "${gpu_temp_servers[@]}"
+do
+	# Получаем температуру с сервера
+	local temp=$(curl -m 0.5 -s "http://$server/")
+	# Проверяем что ответ - валидное число
+	if [[ "$temp" =~ ^[0-9]+$ ]]; then
+		# Если получили ответ - сохраняем максимум
+		g_max_temp=$(get_max_val $g_max_temp $temp)
+		got_response=1
+	fi
+done
+
+# Если получили хоть один ответ - возвращаем максимум из всех
+if [ $got_response -eq 1 ]; then
+	# Проверяем, что полученное значение в пределах допустимых
+	if (($g_max_temp<$ANOMAL_MIN_TEMP)) || (($g_max_temp>$ANOMAL_MAX_TEMP)); then
+		# Если не в пределах - возвращаем максимальное значение
+		g_max_temp=$GPU_MAX_TEMP
+	fi
+	echo $g_max_temp
+else
+	# Ни один сервер не ответил - возвращаем минимальное значение (для отсутствия реакции)
+	echo $GPU_MIN_TEMP
+fi
 }
 
 #Calc new pwm from temperature. 1 - temp, 2 - min_temp, 3 - max_temp.
@@ -85,17 +121,17 @@ while true
 do
 
 #Get CPU and GPU temperatures
-cpu_max_temp_val=$(get_dev_max_temp 0)
-gpu_max_temp_val=$(get_dev_max_temp 1)
+cpu_max_temp_val=$(get_cpu_temp)
+gpu_max_temp_val=$(get_gpu_temp)
 
 #Checking changes for CPU and calc new pwm values
-if ((cpu_max_temp_val!=cpu_max_temp_val_old)); then
+if ((cpu_max_temp_val != cpu_max_temp_val_old)); then
 	cpu_max_temp_val_old=$cpu_max_temp_val
 	cpu_new_pwm_val=$(calc_new_pwm_val $cpu_max_temp_val $CPU_MIN_TEMP $CPU_MAX_TEMP)
 fi
 
 #Checking changes for GPU and calc new pwm values
-if ((gpu_new_pwm_val!=gpu_max_temp_val_old)); then
+if [ "$gpu_max_temp_val" != "NONE" ] && ((gpu_max_temp_val != gpu_max_temp_val_old)); then
 	gpu_max_temp_val_old=$gpu_max_temp_val
 	gpu_new_pwm_val=$(calc_new_pwm_val $gpu_max_temp_val $GPU_MIN_TEMP $GPU_MAX_TEMP)
 fi
@@ -103,7 +139,7 @@ fi
 case_fan_new_speed=$(get_max_val $cpu_new_pwm_val $gpu_new_pwm_val)
 case_fan_now_speed=$(cat $FAN_CTRL_PATH/pwm1)
 
-if (($case_fan_now_speed!=$case_fan_new_speed)); then
+if (($case_fan_now_speed != $case_fan_new_speed)); then
 	echo "$(date +"%d/%m/%y %T") Checking temperatures..."
 	echo "cpu_max_temp_val = $cpu_max_temp_val"
 	echo "gpu_max_temp_val = $gpu_max_temp_val"

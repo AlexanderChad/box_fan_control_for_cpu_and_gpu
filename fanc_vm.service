@@ -1,0 +1,14 @@
+[Unit]
+Description=Fan control (for VM)
+ 
+[Service]
+Type=simple
+WorkingDirectory = /home
+ExecStart=/usr/bin/python3 /home/fanc_server.py
+Restart=on-failure
+RestartSec=5s
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=98
+
+[Install]
+WantedBy=multi-user.target
