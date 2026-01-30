@@ -1,10 +1,10 @@
 [Unit]
 Description=Fan control (for VM)
- 
+
 [Service]
 Type=simple
-WorkingDirectory = /home
-ExecStart=/usr/bin/python3 /home/fanc_server.py
+WorkingDirectory = /home/alex/box_fan_control_for_cpu_and_gpu
+ExecStart=/home/alex/box_fan_control_for_cpu_and_gpu/venv/bin/python /home/alex/box_fan_control_for_cpu_and_gpu/fanc_server.py
 Restart=on-failure
 RestartSec=5s
 CPUSchedulingPolicy=fifo

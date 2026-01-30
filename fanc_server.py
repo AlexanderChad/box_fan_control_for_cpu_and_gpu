@@ -1,8 +1,9 @@
-import subprocess
+import pynvml
 import threading
 import time
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
 
 class TemperatureMonitor:
     def __init__(self):
@@ -20,38 +21,39 @@ class TemperatureMonitor:
         """Обновление показателей температуры в фоновом режиме"""
         while self.running:
             try:
-                result = subprocess.run(
-                    ['nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader'],
-                    capture_output=True,
-                    text=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
-                    timeout=2
-                )
-                if result.returncode == 0:
-                    temps = [int(t.strip()) for t in result.stdout.splitlines() if t.strip().isdigit()]
-                    if temps:
-                        new_temp = max(temps)
-                        with self.lock:
-                            self.current_max_temp = new_temp
-                    else:
-                        # Нет валидных температур - устанавливаем аварийное значение
-                        with self.lock:
-                            self.current_max_temp = 100
-                        time.sleep(self.update_interval * 3)
-                        continue
-                else:
-                    # Ошибка выполнения команды - устанавливаем аварийное значение
+                device_count = pynvml.nvmlDeviceGetCount()  # Получаем количество GPU
+                temps = []
+                for i in range(device_count):
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)  # Получаем дескриптор GPU по индексу
+                    temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)  # Получаем температуру
+                    temps.append(temp)
+
+                if temps:
+                    new_temp = max(temps)
                     with self.lock:
-                        self.current_max_temp = 100
+                        self.current_max_temp = new_temp
+                else:
+                    # Не нашли ни одного GPU с валидной температурой
+                    with self.lock:
+                        self.current_max_temp = 100  # Аварийное значение
                     time.sleep(self.update_interval * 3)
                     continue
-            except Exception:
-                # Исключение при выполнении - устанавливаем аварийное значение
+
+            except pynvml.NVMLError as e:
+                # Ошибка NVML (например, GPU был отключен или драйвер сломался)
+                print(f"Ошибка NVML при обновлении температуры: {e}")
                 with self.lock:
-                    self.current_max_temp = 100
+                    self.current_max_temp = 100  # Аварийное значение
+                time.sleep(self.update_interval * 3)
+                continue
+            except Exception as e:
+                # Другие неожиданные ошибки
+                print(f"Неожиданная ошибка при обновлении температуры: {e}")
+                with self.lock:
+                    self.current_max_temp = 100  # Аварийное значение
                 time.sleep(self.update_interval * 2)
                 continue
-            
+
             time.sleep(self.update_interval)
 
     def start(self):
@@ -64,6 +66,7 @@ class TemperatureMonitor:
         self.running = False
         self.thread.join(timeout=1)
 
+
 class TemperatureHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/':
@@ -73,21 +76,31 @@ class TemperatureHandler(BaseHTTPRequestHandler):
             self.wfile.write(str(monitor.get_temperature()).encode())
         else:
             self.send_error(404)
-            
+
     def log_message(self, format, *args):
         """Отключаем стандартное логирование запросов"""
         return
 
+
 if __name__ == '__main__':
+    try:
+        pynvml.nvmlInit()  # Инициализируем NVML перед запуском монитора
+    except pynvml.NVMLError as e:
+        print(f"Не удалось инициализировать NVML: {e}")
+        print("Убедитесь, что драйверы NVIDIA установлены и работают.")
+        exit(1)  # Завершаем работу, если не можем получить доступ к GPU
+
     monitor = TemperatureMonitor()
     monitor.start()
-    
+
     server = HTTPServer(('', 17006), TemperatureHandler)
-    
+    print("Сервер мониторинга температуры запущен на порту 17006")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        pass
+        print("\nОстановка...")
     finally:
         monitor.stop()
         server.server_close()
+        pynvml.nvmlShutdown()
+        print("Сервер остановлен")
