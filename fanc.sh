@@ -3,8 +3,8 @@
 DELAY=2 #Delay between checks
 CPU_MIN_TEMP=50 #CPU min temp
 CPU_MAX_TEMP=60 #CPU max temp
-GPU_MIN_TEMP=55 #GPU min temp
-GPU_MAX_TEMP=70 #GPU max temp
+GPU_MIN_TEMP=50 #GPU min temp
+GPU_MAX_TEMP=65 #GPU max temp
 FAN_MIN_SIGNAL=75 #Min PWM value
 
 ANOMAL_MIN_TEMP=5 #Anomal min temp
